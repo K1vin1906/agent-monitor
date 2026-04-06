@@ -177,7 +177,7 @@ class SettingsScreen(Screen):
         margin: 0 0 1 0;
     }
     #btn-row {
-        height: 3;
+        height: 5;
         align: center middle;
         padding: 1 0;
     }
