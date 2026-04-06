@@ -4,6 +4,8 @@ A real-time TUI dashboard for monitoring [mcp-multi-model](https://github.com/K1
 
 Watch your multi-model AI queries as they happen — streaming tokens, cost tracking, error states, and side-by-side comparison.
 
+![demo](demo/demo.gif)
+
 ## Features
 
 - **Real-time streaming** — See model responses arrive token by token (300ms buffered refresh)
@@ -13,24 +15,6 @@ Watch your multi-model AI queries as they happen — streaming tokens, cost trac
 - **Settings panel** — View/edit API keys directly in the TUI (press `s`)
 - **Auto-reconnect** — Automatically reconnects when MCP Server restarts
 - **Dynamic config** — Reads model list from `config.yaml`, auto-assigns colors
-
-## Screenshot
-
-```
-┌─ Agent Monitor ─────────────────────────────────────────────────────┐
-│ ● Connected to MCP Server                                           │
-│ ┌─ DeepSeek ──────┐ ┌─ Gemini ────────┐ ┌─ Kimi ─────────┐        │
-│ │ ⠹ Working       │ │ ● Done          │ │ ◆ Standby       │        │
-│ │ deepseek-chat   │ │ gemini-2.5-flash│ │ moonshot-v1-32k │        │
-│ │ Calls: 3  $0.02 │ │ Calls: 3  $0.01│ │ Calls: 1  $0.00│        │
-│ └─────────────────┘ └─────────────────┘ └─────────────────┘        │
-│                                                                     │
-│  Prompt (Claude → Sub-Agent)  │  Response (Sub-Agent Output)        │
-│  ━━━ [14:32:01] Claude → ...  │  ━━━ [14:32:01] DEEPSEEK ━━━       │
-│  Review this code for bugs    │  The function has a potential...     │
-│                               │  1,234 in → 567 out · 2.3s · $0.00│
-└─────────────────────────────────────────────────────────────────────┘
-```
 
 ## Installation
 
