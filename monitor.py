@@ -375,6 +375,22 @@ class AgentCard(Static):
         return Text.from_markup("\n".join(lines))
 
 
+class SessionSummary(Static):
+    """Session 汇总统计"""
+    total_calls = reactive(0)
+    total_tokens = reactive(0)
+    total_cost = reactive(0.0)
+
+    def render(self):
+        parts = [
+            f"[dim]Calls:[/] {self.total_calls}",
+            f"[dim]Tokens:[/] {self.total_tokens:,}",
+        ]
+        if self.total_cost > 0:
+            parts.append(f"[dim]Cost:[/] ${self.total_cost:.4f}")
+        return Text.from_markup("  ".join(parts))
+
+
 class ConnectionStatus(Static):
     """连接状态指示器"""
     connected = reactive(False)
@@ -397,8 +413,17 @@ class AgentMonitorApp(App):
 
     #connection-bar {
         height: 1;
-        padding: 0 2;
+        layout: horizontal;
         background: $surface-darken-1;
+    }
+    #connection-status {
+        width: auto;
+        padding: 0 2;
+    }
+    #session-summary {
+        width: 1fr;
+        content-align: right middle;
+        padding: 0 2;
     }
 
     #status-bar {
@@ -420,6 +445,7 @@ class AgentMonitorApp(App):
 
     #main-panels {
         height: 1fr;
+        display: none;
     }
 
     .panel-box {
@@ -453,7 +479,6 @@ class AgentMonitorApp(App):
 
     #compare-panels {
         height: 1fr;
-        display: none;
     }
     .compare-col {
         width: 1fr;
@@ -484,7 +509,9 @@ class AgentMonitorApp(App):
 
     def compose(self):
         yield Header()
-        yield ConnectionStatus(id="connection-bar")
+        with Horizontal(id="connection-bar"):
+            yield ConnectionStatus(id="connection-status")
+            yield SessionSummary(id="session-summary")
         with Horizontal(id="status-bar"):
             for key, cfg in AGENT_CONFIG.items():
                 yield AgentCard(key, agent_cfg=cfg, id=f"{key}-card", classes="agent-card")
@@ -507,9 +534,11 @@ class AgentMonitorApp(App):
 
     def on_mount(self):
         self._stream_buffers: dict[str, str] = {}
-        self._compare_mode = False
+        self._dynamic_agents: set[str] = set()
+        self._compare_mode = True
         self.connect_task = asyncio.create_task(self.connect_to_socket())
         self.set_interval(0.3, self._flush_streams)
+        self.set_interval(1.0, self._refresh_summary)
 
     def _write_to_response(self, agent: str, content):
         """双写：同时写入统一 log 和对比 log，切换视图时不丢内容"""
@@ -529,9 +558,26 @@ class AgentMonitorApp(App):
                 self._write_to_response(key, Text(text))
                 self._stream_buffers[key] = ""
 
+    def _refresh_summary(self):
+        """从各 AgentCard 汇总 session 统计"""
+        summary = self.query_one("#session-summary", SessionSummary)
+        calls = tokens = 0
+        cost = 0.0
+        for key in self._all_agent_keys():
+            try:
+                card = self.query_one(f"#{key}-card", AgentCard)
+                calls += card.total_calls
+                tokens += card.total_tokens
+                cost += card.total_cost
+            except Exception:
+                pass
+        summary.total_calls = calls
+        summary.total_tokens = tokens
+        summary.total_cost = cost
+
     async def connect_to_socket(self):
         """连接 UDS 并持续读取事件"""
-        conn_status = self.query_one("#connection-bar", ConnectionStatus)
+        conn_status = self.query_one("#connection-status", ConnectionStatus)
         events_log = self.query_one("#events", RichLog)
 
         while True:
@@ -574,6 +620,27 @@ class AgentMonitorApp(App):
             return time.strftime("%H:%M:%S", time.localtime(ms_timestamp / 1000))
         return time.strftime("%H:%M:%S")
 
+    def _register_dynamic_agent(self, agent_key: str) -> AgentCard:
+        """为未知 agent 动态创建卡片和 compare 列"""
+        used = len(self._dynamic_agents) + len(AGENT_CONFIG)
+        color = _AGENT_COLORS[used % len(_AGENT_COLORS)]
+        cfg = {"label": agent_key.capitalize(), "color": color, "order": used}
+
+        card = AgentCard(agent_key, agent_cfg=cfg, id=f"{agent_key}-card", classes="agent-card")
+        self.query_one("#status-bar", Horizontal).mount(card)
+
+        col = Vertical(id=f"compare-{agent_key}", classes="compare-col")
+        self.query_one("#compare-panels", Horizontal).mount(col)
+        col.mount(Label(f"[bold {color}]  {cfg['label']}[/]", classes="compare-title"))
+        col.mount(RichLog(id=f"compare-log-{agent_key}", wrap=True, max_lines=500))
+
+        self._dynamic_agents.add(agent_key)
+        events_log = self.query_one("#events", RichLog)
+        events_log.write(Text.from_markup(
+            f"[bold {color}][{self._ts()}] + {cfg['label']} registered dynamically[/]"
+        ))
+        return card
+
     def handle_event(self, event):
         """处理单个事件"""
         etype = event.get("type", "")
@@ -590,11 +657,14 @@ class AgentMonitorApp(App):
         except Exception:
             card = None
 
+        # 动态注册未知 agent
+        if card is None and agent != "unknown" and etype in ("AGENT_START", "AGENT_CHUNK"):
+            card = self._register_dynamic_agent(agent)
+
         if card:
             color = card.color
             label = card.agent_label.upper()
         else:
-            # 未注册 agent 的 fallback
             color = "white"
             label = agent.upper()
 
@@ -678,6 +748,20 @@ class AgentMonitorApp(App):
                 f"[yellow][{ts}] ↻ {label} retry #{attempt}[/] [dim](HTTP {status}, wait {wait / 1000:.0f}s)[/]"
             ))
 
+        elif etype == "DELEGATE_ROUTE":
+            category = event.get("category", "?")
+            model = event.get("model", "?")
+            reason = event.get("reason", "")
+            task_preview = event.get("task", "")[:80]
+            events_log.write(Text.from_markup(
+                f"[bold blue][{ts}] 🎯 delegate: {category} → {model}[/] [dim]{reason}[/]"
+            ))
+            prompt_log.write(Text.from_markup(
+                f"\n[bold blue]{'━' * 3} [{ts}] DELEGATE ({category} → {model}) {'━' * 10}[/]"
+            ))
+            if task_preview:
+                prompt_log.write(Text.from_markup(f"  [dim]{task_preview}[/]"))
+
         elif etype == "AGENT_ERROR":
             if card:
                 card.status = "error"
@@ -699,24 +783,33 @@ class AgentMonitorApp(App):
         self.sub_title = f"异构 Agent 实时监控 ({mode} View)"
         self.notify(f"Switched to {mode} view", severity="information")
 
+    def _all_agent_keys(self):
+        """返回所有已知 agent key（静态 + 动态）"""
+        return list(AGENT_CONFIG.keys()) + list(self._dynamic_agents)
+
     def action_clear_all(self):
         """清空所有面板"""
         self.query_one("#prompt-log", RichLog).clear()
         self.query_one("#response-log", RichLog).clear()
         self.query_one("#events", RichLog).clear()
-        for key in AGENT_CONFIG:
+        for key in self._all_agent_keys():
             try:
                 self.query_one(f"#compare-log-{key}", RichLog).clear()
             except Exception:
                 pass
         self._stream_buffers.clear()
-        for key in AGENT_CONFIG:
-            card = self.query_one(f"#{key}-card", AgentCard)
-            card.status = "idle"
-            card.model = ""
-            card.total_cost = 0.0
-            card.last_activity = ""
-            card.last_activity_ts = 0.0
+        for key in self._all_agent_keys():
+            try:
+                card = self.query_one(f"#{key}-card", AgentCard)
+                card.status = "idle"
+                card.model = ""
+                card.total_tokens = 0
+                card.total_calls = 0
+                card.total_cost = 0.0
+                card.last_activity = ""
+                card.last_activity_ts = 0.0
+            except Exception:
+                pass
 
     def action_show_help(self):
         """显示帮助"""
