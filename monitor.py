@@ -140,7 +140,7 @@ class HelpScreen(Screen):
             yield Label("[bold cyan]h[/]    This help screen", classes="help-row")
             yield Label("[bold cyan]Esc[/]  Close current dialog", classes="help-row")
             yield Label("")
-            yield Label("[dim]Agent Monitor v3.0  ·  github.com/...[/]", classes="help-row")
+            yield Label("[dim]Agent Monitor v0.2.0  ·  github.com/K1vin1906/agent-monitor[/]", classes="help-row")
 
     def action_dismiss(self):
         self.app.pop_screen()
