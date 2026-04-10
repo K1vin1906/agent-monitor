@@ -1,4 +1,6 @@
-# Agent Monitor
+# Agent Monitor (Archived)
+
+> **This project is archived.** The MCP server's built-in tool output now provides sufficient observability (token counts, latency, cost per call). This TUI monitor is no longer actively maintained.
 
 A real-time TUI dashboard for monitoring [mcp-multi-model](https://github.com/K1vin1906/mcp-multi-model) MCP Server activity. Built with [Textual](https://textual.textualize.io/).
 
