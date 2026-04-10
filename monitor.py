@@ -44,35 +44,42 @@ COMMON_PROVIDERS = [
 # 自动配色轮转
 _AGENT_COLORS = ["cyan", "green", "magenta", "yellow", "blue", "red", "#ff8700", "#af87ff", "#5fd7ff", "#87d787"]
 
-def _build_agent_config() -> dict:
-    """从 config.yaml 动态生成 agent 配置，如果读不到则用默认"""
+def _build_agent_config() -> tuple[dict, set]:
+    """从 config.yaml 动态生成 agent 配置，返回 (config, skip_set)"""
     try:
         import yaml
     except ImportError:
         yaml = None
 
+    skip = set()
     config_path = MCP_SERVER_DIR / "config.yaml"
     if yaml and config_path.exists():
         cfg = yaml.safe_load(config_path.read_text())
         models = cfg.get("models", {})
         result = {}
-        for i, (key, mcfg) in enumerate(models.items()):
+        order = 0
+        for key, mcfg in models.items():
+            # 跳过 image/video 生成模型 — 它们不是文本对话 agent
+            if mcfg.get("image_generation") or mcfg.get("video_generation"):
+                skip.add(key)
+                continue
             result[key] = {
                 "label": mcfg.get("name", key),
-                "color": _AGENT_COLORS[i % len(_AGENT_COLORS)],
-                "order": i,
+                "color": _AGENT_COLORS[order % len(_AGENT_COLORS)],
+                "order": order,
             }
+            order += 1
         if result:
-            return result
+            return result, skip
 
     # fallback
     return {
         "deepseek": {"label": "DeepSeek", "color": "green", "order": 0},
         "gemini": {"label": "Gemini", "color": "cyan", "order": 1},
         "kimi": {"label": "Kimi", "color": "magenta", "order": 2},
-    }
+    }, skip
 
-AGENT_CONFIG = _build_agent_config()
+AGENT_CONFIG, MEDIA_AGENTS = _build_agent_config()
 
 
 # ── 设置页面 ──
@@ -518,18 +525,18 @@ class AgentMonitorApp(App):
         with Horizontal(id="main-panels"):
             with Vertical(id="prompt-box", classes="panel-box"):
                 yield Label("[bold $secondary]  Prompt [dim](Claude → Sub-Agent)[/]", classes="panel-title")
-                yield RichLog(id="prompt-log", wrap=True, max_lines=200)
+                yield RichLog(id="prompt-log", wrap=True, min_width=0, max_lines=200)
             with Vertical(id="response-box", classes="panel-box"):
                 yield Label("[bold $success]  Response [dim](Sub-Agent Output)[/]", classes="panel-title")
-                yield RichLog(id="response-log", wrap=True, max_lines=500)
+                yield RichLog(id="response-log", wrap=True, min_width=0, max_lines=500)
         with Horizontal(id="compare-panels"):
             for key, cfg in AGENT_CONFIG.items():
                 with Vertical(id=f"compare-{key}", classes="compare-col"):
                     yield Label(f"[bold {cfg['color']}]  {cfg['label']}[/]", classes="compare-title")
-                    yield RichLog(id=f"compare-log-{key}", wrap=True, max_lines=500)
+                    yield RichLog(id=f"compare-log-{key}", wrap=True, min_width=0, max_lines=500)
         with Vertical(id="event-section"):
             yield Label("[bold $warning]  Event Log", classes="panel-title")
-            yield RichLog(id="events", wrap=True, max_lines=100)
+            yield RichLog(id="events", wrap=True, min_width=0, max_lines=100)
         yield Footer()
 
     def on_mount(self):
@@ -632,7 +639,7 @@ class AgentMonitorApp(App):
         col = Vertical(id=f"compare-{agent_key}", classes="compare-col")
         self.query_one("#compare-panels", Horizontal).mount(col)
         col.mount(Label(f"[bold {color}]  {cfg['label']}[/]", classes="compare-title"))
-        col.mount(RichLog(id=f"compare-log-{agent_key}", wrap=True, max_lines=500))
+        col.mount(RichLog(id=f"compare-log-{agent_key}", wrap=True, min_width=0, max_lines=500))
 
         self._dynamic_agents.add(agent_key)
         events_log = self.query_one("#events", RichLog)
@@ -645,6 +652,9 @@ class AgentMonitorApp(App):
         """处理单个事件"""
         etype = event.get("type", "")
         agent = event.get("agent", "unknown")
+        # 忽略媒体模型（image/video）的事件，不创建卡片也不写日志
+        if agent in MEDIA_AGENTS:
+            return
         ts = self._ts(event.get("timestamp"))
 
         card_id = f"#{agent}-card"
